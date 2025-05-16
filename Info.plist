@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CKContainer</key>
+	<string>iCloud.com.lcoppers.Vehix</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Vehix uses Face ID to securely sign you into your account.</string>
+	<key>NSRemoteNotificationUsageDescription</key>
+	<string>Vehix sends notifications about vehicle maintenance, service requirements, and inventory alerts.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>location</string>
+		<string>processing</string>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.microsoft.excel.xlsx</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>xlsx</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.openxmlformats-officedocument.spreadsheetml.sheet</string>
+				</array>
+			</dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Microsoft Excel Spreadsheet</string>
+		</dict>
+	</array>
+</dict>
+</plist>
