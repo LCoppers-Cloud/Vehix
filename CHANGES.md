@@ -21,7 +21,7 @@
 - Removed unsupported unique constraints from model IDs
 - Fixed circular references by reorganizing model relationships
 - Added presentation mode for automatic developer login
-- Pre-filled login form with developer email (lornejohn21@yahoo.com)
+- Pre-filled login form with developer email 
 - Created developer account with admin privileges for demonstrations
 - Added fallback to local data storage when CloudKit is unavailable
 
