@@ -444,7 +444,7 @@ The app includes CloudKit integration (configured for production environments):
 ```swift
 // Production configuration with CloudKit
 let cloudKitConfig = ModelConfiguration.CloudKitDatabase(
-    containerIdentifier: "iCloud.com.lcoppers.Vehix"
+    containerIdentifier: "********************"
 )
 let configuration = ModelConfiguration(cloudKitDatabase: cloudKitConfig)
 ```
