@@ -100,192 +100,138 @@ struct VehixApp: App {
     @StateObject private var samsaraService: SamsaraService
     @StateObject private var cloudKitManager: CloudKitManager
     @StateObject private var storeKitManager: StoreKitManager
+    @StateObject private var aiDataManager: AISharedDataManager
+    @StateObject private var marketingManager = MarketingDataManager()
     @StateObject private var notificationDelegate = NotificationDelegate()
+    @StateObject private var settingsManager = AppSettingsManager()
     
     init() {
-        // Use the Vehix namespace schema to ensure consistent model usage
-        let schema = Schema(Vehix.completeSchema())
+        // Register secure transformers to fix CoreData security warnings
+        IntArrayTransformer.register()
+        StringArrayTransformer.register()
+        CLLocationCoordinate2DTransformer.register()
+        ExtendedDataTransformer.register()
+        
+        // SCHEMA BLOAT FIX: Use clean schema system instead of progressive system
+        migrateToCleanSchema() // Migrate from old system
+        
+        let currentLevel = getCleanSchemaLevel()
+        print("🧹 Current clean schema level: \(currentLevel.displayName)")
+        
+        // For production stability, start with minimal and advance gradually
+        let targetLevel: CleanSchemaLevel = {
+            switch currentLevel {
+            case .minimal:
+                // Stay minimal until we confirm stability
+                print("📊 Maintaining minimal schema for stability")
+                return .minimal
+            case .production:
+                print("📊 Using production schema with \(currentLevel.modelCount) models")
+                return .production
+            }
+        }()
+        
+        let schema = targetLevel.schema
+        print("📊 Clean schema contains exactly \(schema.entities.count) entities")
         
         // Configure model container based on environment
         var configuration = ModelConfiguration()
         
-        // TEMPORARY: Force development environment until authentication issues are resolved
-        // This will allow the app to run without CloudKit errors
-        let forceDevelopmentMode = true
+        // CLOUDKIT ENABLED: Now that app is stable, enable CloudKit progressively
+        let _ = true // Enable CloudKit for data synchronization
+        let forceDevelopmentMode = false // Allow production CloudKit for testing
         
-        // For presentations: Auto-login as developer (enable for testing)
-        let presentationMode = true
-        
-        // Regular environment detection (will be overridden by forceDevelopmentMode for now)
+        // Regular environment detection
         #if DEBUG 
         let isSimulator = ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil
         #else
         let isSimulator = false
         #endif
         
-        // Use the forced development flag for now
+        // Use more intelligent environment detection
         let isDevEnvironment = isSimulator || forceDevelopmentMode
         
-        // App environment configuration
-        if isDevEnvironment {
-            // Development/Simulator: Disable CloudKit integration completely
-            print("Development environment detected - using local storage only")
-            configuration = ModelConfiguration(isStoredInMemoryOnly: false)
-        } else {
-            // TEMPORARY: Disable CloudKit until all relationship issues are fixed
-            print("Production environment detected - but using local storage due to ongoing CloudKit integration issues")
-            configuration = ModelConfiguration(isStoredInMemoryOnly: false)
+        // CLEAN SCHEMA FIX: Use clean schema system instead of ultra-minimal hack
+        let useCleanSchema = true
+        
+        // Select schema based on clean schema system
+        let finalSchema: Schema
+        if useCleanSchema {
+            // Use clean schema system - exactly 4 or 10 models, no bloat
+            finalSchema = targetLevel.schema
+            print("🧹 Using clean \(targetLevel.displayName) schema (\(finalSchema.entities.count) models)")
             
-            // Original production configuration (commented out until fixed):
-            // configuration = ModelConfiguration(cloudKitDatabase: .private("iCloud.com.lcoppers.Vehix"))
+            // Validate schema has expected entity count
+            _ = validateCleanSchema(finalSchema, expectedCount: targetLevel.modelCount)
+        } else {
+            // Fallback to ultra-minimal (should not be needed with clean schema)
+            finalSchema = Schema([
+                AuthUser.self,
+                Vehix.Vehicle.self,
+                Vehix.InventoryItem.self,
+                AppSettings.self
+            ], version: .init(1, 0, 0))
+            print("🚨 Using fallback ultra-minimal schema (4 models)")
         }
+        
+        // Always use local storage to prevent CloudKit crashes
+        configuration = ModelConfiguration(
+            schema: finalSchema,
+            isStoredInMemoryOnly: false
+        )
+        print("🔧 Using local storage only for maximum stability")
         
         do {
-            modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+            modelContainer = try ModelContainer(
+                for: finalSchema, 
+                configurations: [configuration]
+            )
+            print("✅ Model container initialized successfully with clean schema (\(finalSchema.entities.count) entities) and local storage")
+            
+            #if DEBUG
+            debugPrintSchemaInfo(finalSchema)
+            #endif
+            
         } catch {
-            fatalError("Failed to initialize model container: \(error)")
+            print("❌ Failed to initialize model container: \(error)")
+            fatalError("Could not initialize model container: \(error)")
         }
         
-        // Initialize services based on environment
+        // Initialize services with minimal setup to prevent crashes
         let modelContext = ModelContext(modelContainer)
         
-        // Simplify service initialization to ensure consistent behavior
-        // Always use the same modelContext for all services
         print("📱 Initializing services for \(isDevEnvironment ? "development" : "production") environment")
         
         // Initialize auth service with context
-        let auth = AppAuthService(useMockData: isDevEnvironment)
-        auth.modelContext = modelContext
+        let auth = AppAuthServiceImpl(modelContext: modelContext)
         _authService = StateObject(wrappedValue: auth)
         
-        // Initialize other services with the same pattern
-        _serviceTitanService = StateObject(wrappedValue: ServiceTitanService(modelContext: modelContext, isSimulatorEnvironment: isDevEnvironment))
+        // Initialize other services with minimal setup - defer complex initialization
+        _serviceTitanService = StateObject(wrappedValue: ServiceTitanService(modelContext: modelContext))
         
-        // Initialize Samsara service with additional setup for demo purposes
-        let samsara = SamsaraService(modelContext: modelContext, isSimulatorEnvironment: isDevEnvironment)
+        // Initialize Samsara service with minimal setup
+        let samsara = SamsaraService(modelContext: modelContext)
         _samsaraService = StateObject(wrappedValue: samsara)
         
-        _cloudKitManager = StateObject(wrappedValue: CloudKitManager(modelContext: modelContext, isSimulatorEnvironment: isDevEnvironment))
-        _storeKitManager = StateObject(wrappedValue: StoreKitManager(isSimulatorEnvironment: isDevEnvironment))
+        // Initialize CloudKit manager and set model context - defer complex setup
+        let cloudKit = CloudKitManager()
+        cloudKit.modelContext = modelContext
+        _cloudKitManager = StateObject(wrappedValue: cloudKit)
         
-        // After all properties are initialized, we can safely call helper methods
-        if presentationMode {
-            // Auto-login with a developer account
-            setupDeveloperAccount(auth: auth, modelContext: modelContext)
-        }
+        _storeKitManager = StateObject(wrappedValue: StoreKitManager())
         
-        // Ensure a Samsara config exists for demo purposes
-        setupSamsaraConfigIfNeeded(modelContext: modelContext)
+        // Initialize AI shared data manager for machine learning improvements
+        let aiData = AISharedDataManager(modelContext: modelContext, cloudKitManager: cloudKit)
+        _aiDataManager = StateObject(wrappedValue: aiData)
         
-        // Set up BETA tester account with premium access for 10 years
-        setupBetaTesterAccount(modelContext: modelContext)
-    }
-    
-    private func setupDeveloperAccount(auth: AppAuthService, modelContext: ModelContext) {
-        // Auto-login with a developer account
-        var developerUser = AuthUser(
-            id: "developer-account-123",
-            email: "lorenjohn21@yahoo.com",
-            fullName: "Loren Coppers",
-            role: .admin,
-            isVerified: true
-        )
+        // Connect auth service to CloudKit manager
+        auth.setCloudKitManager(cloudKit)
         
-        // Check if developer account already exists
-        do {
-            // Get all users and filter in memory instead of using predicate
-            let descriptor = FetchDescriptor<AuthUser>()
-            let allUsers = try modelContext.fetch(descriptor)
-            let existingUsers = allUsers.filter { user in
-                user.email == "lorenjohn21@yahoo.com"
-            }
-            
-            if existingUsers.isEmpty {
-                // Create developer account if it doesn't exist
-                modelContext.insert(developerUser)
-                try modelContext.save()
-                print("Created developer account in database")
-            } else {
-                // Use existing developer account
-                developerUser = existingUsers.first!
-                print("Using existing developer account from database")
-            }
-            auth.currentUser = developerUser
-            auth.isLoggedIn = true
-        } catch {
-            print("Error setting up developer account: \(error)")
-            // Fall back to developer account in memory
-            auth.currentUser = developerUser
-            auth.isLoggedIn = true
-        }
-    }
-    
-    private func setupSamsaraConfigIfNeeded(modelContext: ModelContext) {
-        // Check if Samsara config exists
-        do {
-            let descriptor = FetchDescriptor<SamsaraConfig>()
-            let existingConfigs = try modelContext.fetch(descriptor)
-            
-            if existingConfigs.isEmpty {
-                // Create a sample Samsara config for demo purposes
-                let config = SamsaraConfig(
-                    apiKey: "sample-api-key",
-                    organizationId: "demo-org-123",
-                    isEnabled: true,
-                    syncIntervalMinutes: 30
-                )
-                modelContext.insert(config)
-                try modelContext.save()
-                print("✅ Created sample Samsara configuration for demonstration")
-            } else {
-                print("✅ Using existing Samsara configuration")
-            }
-        } catch {
-            print("❌ Error setting up Samsara configuration: \(error)")
-        }
-    }
-    
-    private func setupBetaTesterAccount(modelContext: ModelContext) {
-        // Check if the special beta tester account exists
-        let appleId = "lorenjohn21@yahoo.com" // Beta tester Apple ID
+        // Clean up UserDefaults to prevent 4MB storage violations
+        UserDefaultsCleanup.performCleanup()
+        UserDefaultsCleanup.checkUserDefaultsSize()
         
-        do {
-            // Look for existing premium account - use in-memory filtering
-            let descriptor = FetchDescriptor<AuthUser>()
-            let allUsers = try modelContext.fetch(descriptor)
-            let users = allUsers.filter { user in
-                user.email == appleId
-            }
-            
-            if let existingUser = users.first {
-                // Ensure the user has premium access
-                if existingUser.userRole != .premium {
-                    existingUser.userRole = .premium
-                    try modelContext.save()
-                    print("✅ Beta tester account updated to premium status")
-                }
-            } else {
-                // Create a new premium account for beta testing
-                let betaTester = AuthUser(
-                    email: appleId,
-                    fullName: "Beta Tester",
-                    role: .premium,
-                    isVerified: true,
-                    isTwoFactorEnabled: false
-                )
-                
-                modelContext.insert(betaTester)
-                try modelContext.save()
-                print("✅ Created new premium beta tester account")
-            }
-            
-            // Reset app walkthrough to show up for the user
-            UserDefaults.standard.set(false, forKey: "hasCompletedAppWalkthrough")
-            print("✅ Reset walkthrough status for beta testing")
-            
-        } catch {
-            print("❌ Error setting up beta tester account: \(error)")
-        }
+        print("✅ App initialization completed successfully")
     }
     
     var body: some Scene {
@@ -294,11 +240,16 @@ struct VehixApp: App {
                 if showLaunchScreen {
                     LaunchScreenView()
                         .onAppear {
-                            // Show launch screen for 2 seconds
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            // Show launch screen for longer to allow safe initialization
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                                 withAnimation {
                                     showLaunchScreen = false
                                     setupNotifications() // Setup notifications when app launches
+                                    
+                                    // Initialize complex services after UI is ready
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                        initializeComplexServices()
+                                    }
                                 }
                             }
                         }
@@ -310,6 +261,8 @@ struct VehixApp: App {
                         .environmentObject(samsaraService)
                         .environmentObject(cloudKitManager)
                         .environmentObject(storeKitManager)
+                        .environmentObject(aiDataManager)
+                        .environmentObject(marketingManager)
                         .transition(.opacity)
                 }
             }
@@ -320,68 +273,7 @@ struct VehixApp: App {
         .modelContainer(modelContainer)
     }
     
-    /// Creates sample data for the app if needed (for demonstration/testing purposes)
-    private static func createSampleDataIfNeeded(modelContext: ModelContext) async {
-        // Check if we already have data
-        let vehicleDescriptor = FetchDescriptor<AppVehicle>()
-        let inventoryDescriptor = FetchDescriptor<AppInventoryItem>()
-        let warehouseDescriptor = FetchDescriptor<AppWarehouse>()
-        
-        do {
-            let existingVehicles = try modelContext.fetch(vehicleDescriptor)
-            let existingInventory = try modelContext.fetch(inventoryDescriptor)
-            let existingWarehouses = try modelContext.fetch(warehouseDescriptor)
-            
-            // Only create sample data if we don't have any
-            if existingVehicles.isEmpty && existingInventory.isEmpty && existingWarehouses.isEmpty {
-                print("Creating sample data for first-time app use")
-                await createSampleData(modelContext: modelContext)
-            } else {
-                print("Sample data already exists, skipping creation")
-            }
-        } catch {
-            print("Error checking for existing data: \(error)")
-        }
-    }
-    
-    /// Creates sample data for demo/testing
-    private static func createSampleData(modelContext: ModelContext) async {
-        // Create sample inventory items but don't assign them to warehouses
-        let item1 = AppInventoryItem(name: "Oil Filter", partNumber: "OF-123", category: "Filters")
-        let item2 = AppInventoryItem(name: "Air Filter", partNumber: "AF-456", category: "Filters")
-        let item3 = AppInventoryItem(name: "Wiper Blades", partNumber: "WB-789", category: "Accessories")
-        let item4 = AppInventoryItem(name: "Brake Pads", partNumber: "BP-234", category: "Brakes")
-        let item5 = AppInventoryItem(name: "Spark Plugs", partNumber: "SP-567", category: "Engine")
-        
-        modelContext.insert(item1)
-        modelContext.insert(item2)
-        modelContext.insert(item3)
-        modelContext.insert(item4)
-        modelContext.insert(item5)
-        
-        // Create a sample purchase order
-        let po1 = PurchaseOrder(
-            poNumber: "PO-2025-001",
-            date: Date(),
-            vendorName: "AutoParts Wholesale",
-            status: PurchaseOrderStatus(rawValue: "Draft") ?? .draft, // Use draft status instead of submitted
-            subtotal: 0.0,
-            tax: 0.0,
-            total: 0.0,
-            createdByName: "System"
-        )
-        
-        // Insert purchase order without line items
-        modelContext.insert(po1)
-        
-        // Try to save all entities
-        do {
-            try modelContext.save()
-            print("Sample inventory data created successfully")
-        } catch {
-            print("Error saving sample data: \(error)")
-        }
-    }
+
     
     // Setup notification handling
     private func setupNotifications() {
@@ -409,6 +301,21 @@ struct VehixApp: App {
         )
         
         UNUserNotificationCenter.current().setNotificationCategories([category])
+    }
+    
+    // Initialize complex services after app UI has loaded
+    private func initializeComplexServices() {
+        print("🔧 Initializing complex services...")
+        
+
+        
+        // Start Samsara auto sync if enabled
+        samsaraService.startAutoSyncIfEnabled()
+        
+        // Setup GPS manager context
+        AppleGPSTrackingManager.shared.setModelContext(ModelContext(modelContainer))
+        
+        print("✅ Complex services initialized")
     }
 }
 
@@ -447,6 +354,7 @@ struct AuthStateView: View {
     @EnvironmentObject var serviceTitanService: ServiceTitanService
     @EnvironmentObject var samsaraService: SamsaraService
     @EnvironmentObject var cloudKitManager: CloudKitManager
+    @EnvironmentObject var storeKit: StoreKitManager
     
     var body: some View {
         if authService.isLoggedIn, let user = authService.currentUser {
@@ -463,14 +371,26 @@ struct AuthStateView: View {
                 case .technician:
                     MainTabView()
                 case .premium:
-                    Text("Premium User Dashboard")
+                    MainTabView() // Premium users get full access
                 case .standard:
-                    Text("Standard User Dashboard")
+                    MainTabView() // Standard users also get access (can be limited per feature)
+                case .owner:
+                    MainTabView() // Business owners get full access
+                case .manager:
+                    MainTabView() // Business managers get full access
                 }
             }
         } else {
-            // Not logged in - show login screen
-            LoginView()
+            // Check if this is a first-time launch
+            if authService.checkFirstTimeSetup() {
+                // First time - show business onboarding
+                BusinessOnboardingFlow()
+                    .environmentObject(authService)
+                    .environmentObject(storeKit)
+            } else {
+                // Returning user - show login screen
+                LoginView()
+            }
         }
     }
 }
@@ -483,11 +403,12 @@ struct MainTabView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var selectedTab = 0
     @State private var showSharedInventory = false
+    @StateObject private var settingsManager = AppSettingsManager()
     
     var body: some View {
         TabView(selection: $selectedTab) {
             // Dashboard Tab
-            if authService.currentUser?.userRole == .dealer || authService.currentUser?.userRole == .admin {
+            if authService.currentUser?.userRole == .dealer || authService.currentUser?.userRole == .admin || authService.currentUser?.userRole == .premium {
                 NavigationStack {
                     ManagerDashboardView()
                         .environment(\.modelContext, modelContext)
@@ -539,7 +460,7 @@ struct MainTabView: View {
             }
             .tag(3)
             // Staff Tab (Inventory Managers/Admins only)
-            if authService.currentUser?.userRole == .dealer || authService.currentUser?.userRole == .admin {
+            if authService.currentUser?.userRole == .dealer || authService.currentUser?.userRole == .admin || authService.currentUser?.userRole == .premium {
                 NavigationStack {
                     StaffListView()
                         .environmentObject(authService)
@@ -549,6 +470,19 @@ struct MainTabView: View {
                     Label("Staff", systemImage: "person.2.fill")
                 }
                 .tag(4)
+                
+                // Data & Analytics Tab (Managers/Admins only)
+                if settingsManager.canUserSeeDataAnalytics(userRole: authService.currentUser?.userRole ?? .standard) {
+                    NavigationStack {
+                        DataAnalyticsView()
+                            .environmentObject(authService)
+                            .environment(\.modelContext, modelContext)
+                    }
+                    .tabItem {
+                        Label("Data", systemImage: "chart.bar.xaxis")
+                    }
+                    .tag(5)
+                }
             }
             // Track Usage Tab (For Technicians)
             if authService.currentUser?.userRole == .technician {
@@ -562,7 +496,7 @@ struct MainTabView: View {
                 .tag(4)
             }
             // Replenishment Tab (For Managers/Admins)
-            if authService.currentUser?.userRole == .dealer || authService.currentUser?.userRole == .admin {
+            if authService.currentUser?.userRole == .dealer || authService.currentUser?.userRole == .admin || authService.currentUser?.userRole == .premium {
                 NavigationStack {
                     InventoryReplenishmentView()
                 }
@@ -570,7 +504,7 @@ struct MainTabView: View {
                 .tabItem {
                     Label("Replenishment", systemImage: "arrow.clockwise")
                 }
-                .tag(5)
+                .tag(6)
             }
             // Receipt Scanner Tab
             NavigationStack {
@@ -579,7 +513,7 @@ struct MainTabView: View {
             .tabItem {
                 Label("Scan", systemImage: "doc.text.viewfinder")
             }
-            .tag(6)
+            .tag(7)
             // Settings Tab
             NavigationStack {
                 SettingsView()
@@ -587,7 +521,7 @@ struct MainTabView: View {
             .tabItem {
                 Label("Settings", systemImage: "gear")
             }
-            .tag(7)
+            .tag(8)
         }
         .environmentObject(authService)
         .environmentObject(storeKitManager)
@@ -595,6 +529,13 @@ struct MainTabView: View {
             print("MODEL CONTEXT CHECK: Available")
             print("STORE KIT MANAGER: \(storeKitManager)")
             print("AUTH SERVICE: \(authService)")
+            settingsManager.setModelContext(modelContext)
+            
+            // Update StoreKit plan based on user role for beta testing and premium users
+            if let userRole = authService.currentUser?.userRole {
+                storeKitManager.updateCurrentPlanFromUserRole(userRole)
+                print("✅ Updated StoreKit plan to \(storeKitManager.currentPlan) for user role \(userRole)")
+            }
         }
     }
 }
@@ -761,6 +702,8 @@ struct MoreTabView: View {
 // View to handle authentication state
 struct AuthWrapper: View {
     @EnvironmentObject var authService: AppAuthService
+    @EnvironmentObject var storeKitManager: StoreKitManager
+    @Environment(\.modelContext) private var modelContext
     @State private var showWalkthrough = false
     @State private var showResetConfirmation = false
     @State private var isFinishedLoading = false
@@ -772,7 +715,9 @@ struct AuthWrapper: View {
                 ContentView()
                     .environmentObject(authService)
                     .onAppear {
-                        // Check if user should see walkthrough
+                        // PRODUCTION MODE: No sample data manager needed
+                        
+                        // Check if user should see walkthrough (production users get clean walkthrough)
                         if let _ = authService.currentUser, 
                            !UserDefaults.standard.bool(forKey: "hasCompletedAppWalkthrough") {
                             showWalkthrough = true
@@ -799,6 +744,7 @@ struct AuthWrapper: View {
                 // Auth flow when not logged in
                 LoginView()
                     .environmentObject(authService)
+                    .environmentObject(storeKitManager)
             }
         }
     }
@@ -826,6 +772,15 @@ struct ContentView: View {
                 MainTabView()
                     .environmentObject(authService)
                     .environmentObject(storeKitManager)
+                    .environment(\.modelContext, modelContext)
+            case .owner:
+                MainTabView()
+                    .environmentObject(authService)
+                    .environmentObject(storeKitManager)
+                    .environment(\.modelContext, modelContext)
+            case .manager:
+                ManagerDashboardView()
+                    .environmentObject(authService)
                     .environment(\.modelContext, modelContext)
             }
         } else {

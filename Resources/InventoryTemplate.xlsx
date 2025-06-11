@@ -1,0 +1,25 @@
+/*
+This is a placeholder for the InventoryTemplate.xlsx file.
+
+In a real project, you would need to:
+1. Create an Excel file with the following columns:
+   - Name (required)
+   - Category (required)
+   - Description
+   - PartNumber
+   - Unit (required)
+   - Cost
+   - Price
+   - Quantity (required)
+   - ReorderPoint
+   - TargetStock
+   - Location
+   - Supplier
+   - Notes
+
+2. Add sample data and formatting to make it user-friendly
+
+3. Add this file to your Xcode project's Resources group
+
+The actual file would be binary and not a text file like this.
+*/ 
